@@ -3,23 +3,26 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>羽球公平排點系統</title>
+    <title>羽球公平排點系統 v4.0</title>
     <style>
         :root { --primary: #0f172a; --accent: #10b981; --danger: #ef4444; }
-        body { font-family: sans-serif; background: #f8fafc; margin: 0; padding: 15px; color: #334155; }
+        body { font-family: sans-serif; background: #f8fafc; margin: 0; padding: 15px; color: #334155; line-height: 1.5; }
         .card { background: white; border-radius: 12px; padding: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); margin-bottom: 20px; border: 1px solid #e2e8f0; }
+        h1 { text-align: center; color: var(--primary); font-size: 22px; margin-bottom: 20px; }
         .setup-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px; }
-        input, button { padding: 12px; border-radius: 8px; border: 1px solid #cbd5e1; font-size: 16px; width: 100%; box-sizing: border-box; }
+        input, button { padding: 12px; border-radius: 8px; border: 1px solid #cbd5e1; font-size: 16px; width: 100%; box-sizing: border-box; outline: none; }
         button { background: var(--primary); color: white; border: none; cursor: pointer; font-weight: 600; }
-        .btn-draw { background: var(--accent); font-size: 20px; padding: 20px; }
-        .timer-box { font-size: 48px; font-weight: 800; text-align: center; margin: 10px 0; font-family: monospace; }
-        .my-status { background: #f1f5f9; padding: 15px; border-radius: 8px; margin-top: 10px; border-left: 5px solid var(--accent); }
+        .btn-draw { background: var(--accent); font-size: 20px; padding: 20px; margin-top: 10px; }
+        .timer-box { font-size: 48px; font-weight: 800; text-align: center; margin: 10px 0; font-family: monospace; color: var(--primary); }
+        .my-status { background: #f1f5f9; padding: 15px; border-radius: 8px; margin-top: 15px; border-left: 5px solid var(--accent); min-height: 100px; }
+        .status-msg { text-align: center; color: var(--accent); font-weight: bold; margin: 10px 0; }
+        hr { border: 0; border-top: 1px solid #e2e8f0; margin: 15px 0; }
     </style>
 </head>
 <body>
 
 <div class="container" style="max-width: 500px; margin: 0 auto;">
-    <h1 style="text-align: center;">🏸 羽球公平排點系統</h1>
+    <h1>🏸 羽球公平排點系統</h1>
 
     <div class="card">
         <h3>⚙️ 活動設定</h3>
@@ -27,124 +30,150 @@
             <div><label style="font-size:12px;">場地數量</label><input type="number" id="courtNum" value="2"></div>
             <div><label style="font-size:12px;">總人數</label><input type="number" id="playerNum" value="12"></div>
         </div>
-        <button onclick="initSystem()">1. 初始化系統 (主辦人點擊)</button>
-        <div id="initStatus" style="text-align:center; color:var(--accent); font-weight:bold; margin-top:10px;"></div>
+        <button onclick="initSystem()">1. 初始化系統 (主辦人)</button>
+        <div id="initStatus" class="status-msg"></div>
         <button id="startBtn" onclick="toggleTimer()" style="display:none; background:#334155; margin-top:10px;">▶ 開始計時</button>
         <div class="timer-box" id="timerDisplay">15:00</div>
     </div>
 
     <div class="card" id="drawSection" style="display:none; text-align:center;">
         <h3>🎲 領取球員代號</h3>
+        <p style="font-size:12px; color:#64748b;">每人點擊一次，領取後請記住號碼</p>
         <button class="btn-draw" id="drawBtn" onclick="drawCode()">點擊抽籤</button>
-        <div id="drawResult" style="font-size:32px; font-weight:bold; color:var(--accent); margin-top:10px;"></div>
+        <div id="drawResult" style="font-size:40px; font-weight:bold; color:var(--accent); margin-top:10px;"></div>
     </div>
 
     <div class="card" id="querySection" style="display:none;">
         <h3>🔍 個人賽程查詢</h3>
-        <input type="number" id="searchCode" placeholder="輸入你的代號" oninput="searchSchedule()">
-        <div id="personalSchedule" class="my-status"></div>
+        <input type="number" id="searchCode" placeholder="輸入你的代號 (例如: 5)" oninput="searchSchedule()">
+        <div id="personalSchedule" class="my-status">請輸入代號查看結果</div>
     </div>
 </div>
 
 <script>
-    let drawPool = [];
-    let scheduleData = [];
-    let totalPlayers = 0;
-    let timer = null;
-    let secondsLeft = 15 * 60;
+    let playerDrawPool = []; // 供抽籤用的池
+    let scheduleData = [];   // 儲存 8 場賽程
+    let totalPlayersCount = 0;
+    let timerInterval = null;
+    let secondsRemaining = 15 * 60;
 
     function initSystem() {
         const M = parseInt(document.getElementById('playerNum').value);
         const N = parseInt(document.getElementById('courtNum').value);
-        if (M < 4 * N) return alert(`人數不足！${N}個場地需要${N*4}人。`);
+        
+        if (M < 4 * N) {
+            alert(`人數不足！${N}個場地至少需要 ${N*4} 人。`);
+            return;
+        }
 
-        totalPlayers = M;
-        drawPool = Array.from({length: M}, (_, i) => i + 1);
-        shuffle(drawPool); // 供玩家抽籤的順序
+        totalPlayersCount = M;
+        // 1. 建立抽籤池並打亂
+        playerDrawPool = Array.from({length: M}, (_, i) => i + 1);
+        for (let i = playerDrawPool.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [playerDrawPool[i], playerDrawPool[j]] = [playerDrawPool[j], playerDrawPool[i]];
+        }
 
-        // --- 公平排點算法 ---
-        let playerPlayCounts = Array(M + 1).fill(0); // 紀錄 P1~PM 各打幾場
+        // 2. 公平排點算法生成 8 場賽程
+        let playCounts = {}; // 紀錄每個人打幾場
+        for (let i = 1; i <= M; i++) playCounts[i] = 0;
+
         scheduleData = [];
-
-        for (let r = 0; r < 8; r++) {
-            // 找出本輪要上場的 4N 個人
-            // 排序規則：優先選「目前打最少場」的人，如果場次一樣就隨機
-            let sortedPlayers = Array.from({length: M}, (_, i) => i + 1)
-                .map(id => ({ id, count: playerPlayCounts[id], rand: Math.random() }))
+        for (let r = 1; r <= 8; r++) {
+            // 挑選這輪上場的人：優先挑打最少場的人
+            let playersSortedByPlayCount = Array.from({length: M}, (_, i) => i + 1)
+                .map(id => ({ id: id, count: playCounts[id], rand: Math.random() }))
                 .sort((a, b) => a.count - b.count || a.rand - b.rand);
 
-            let selectedIds = sortedPlayers.slice(0, N * 4).map(p => p.id);
-            shuffle(selectedIds); // 打亂上場順序分配到不同場地
+            let selectedThisRound = playersSortedByPlayCount.slice(0, N * 4).map(p => p.id);
+            // 隨機分配到各個場地
+            for (let i = selectedThisRound.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [selectedThisRound[i], selectedThisRound[j]] = [selectedThisRound[j], selectedThisRound[i]];
+            }
 
             let roundMatches = [];
             for (let c = 0; c < N; c++) {
-                let matchPlayers = selectedIds.slice(c * 4, (c + 1) * 4);
-                matchPlayers.forEach(id => playerPlayCounts[id]++); // 增加紀錄
-                roundMatches.push({ court: c + 1, p: matchPlayers });
+                let matchTeams = selectedThisRound.slice(c * 4, (c + 1) * 4);
+                // 更新出賽場次
+                matchTeams.forEach(id => playCounts[id]++);
+                roundMatches.push({ court: c + 1, players: matchTeams });
             }
             scheduleData.push(roundMatches);
         }
 
-        document.getElementById('initStatus').innerText = "✅ 初始化成功！已生成公平賽程。";
+        document.getElementById('initStatus').innerText = "✅ 系統初始化成功！可以開始抽籤。";
         document.getElementById('drawSection').style.display = 'block';
         document.getElementById('querySection').style.display = 'block';
         document.getElementById('startBtn').style.display = 'block';
+        document.getElementById('drawResult').innerText = "";
     }
 
     function drawCode() {
-        if (drawPool.length === 0) return alert("號碼已領完！");
-        let code = drawPool.pop();
+        if (playerDrawPool.length === 0) {
+            alert("號碼已全數抽完！");
+            return;
+        }
+        let code = playerDrawPool.pop();
         document.getElementById('drawResult').innerText = "P" + code;
         document.getElementById('searchCode').value = code;
-        searchSchedule();
+        searchSchedule(); // 抽完自動查詢
     }
 
     function searchSchedule() {
         const code = parseInt(document.getElementById('searchCode').value);
-        if (!code || code <= 0 || code > totalPlayers) {
-            document.getElementById('personalSchedule').innerHTML = "請輸入正確代號 (1~" + totalPlayers + ")";
+        const display = document.getElementById('personalSchedule');
+        
+        if (!code || code <= 0 || code > totalPlayersCount) {
+            display.innerHTML = "請輸入有效的球員代號 (1-" + totalPlayersCount + ")";
             return;
         }
-        
-        let totalPlay = 0;
-        let html = `<strong>代號 P${code} 的賽程：</strong><br>`;
-        scheduleData.forEach((round, idx) => {
-            let found = false;
+
+        let html = `<strong>代號 P${code} 的賽程表：</strong><br><hr>`;
+        let totalGames = 0;
+
+        scheduleData.forEach((round, index) => {
+            let foundInRound = false;
             round.forEach(m => {
-                if (m.p.includes(code)) {
-                    html += `第 ${idx+1} 場：🧱 場地 ${m.court}<br>`;
-                    found = true; totalPlay++;
+                if (m.players.includes(code)) {
+                    html += `第 ${index + 1} 場：🧱 <strong>場地 ${m.court}</strong><br>`;
+                    foundInRound = true;
+                    totalGames++;
                 }
             });
-            if (!found) html += `<span style="color:#94a3b8">第 ${idx+1} 場：💤 休息</span><br>`;
+            if (!foundInRound) {
+                html += `<span style="color:#94a3b8">第 ${index + 1} 場：💤 休息</span><br>`;
+            }
         });
-        html += `<hr><strong>總計上場：${totalPlay} 場</strong>`;
-        document.getElementById('personalSchedule').innerHTML = html;
+
+        html += `<hr><strong>總計上場：${totalGames} 場</strong>`;
+        display.innerHTML = html;
     }
 
     function toggleTimer() {
-        if (timer) {
-            clearInterval(timer);
-            timer = null;
-            document.getElementById('startBtn').innerText = "▶ 繼續計時";
+        const btn = document.getElementById('startBtn');
+        if (timerInterval) {
+            clearInterval(timerInterval);
+            timerInterval = null;
+            btn.innerText = "▶ 繼續計時";
         } else {
-            document.getElementById('startBtn').innerText = "⏸ 暫停";
-            timer = setInterval(() => {
-                if (--secondsLeft < 0) {
-                    clearInterval(timer);
-                    alert("換場！");
-                    secondsLeft = 15 * 60;
+            btn.innerText = "⏸ 暫停計時";
+            timerInterval = setInterval(() => {
+                secondsRemaining--;
+                let m = Math.floor(secondsRemaining / 60);
+                let s = secondsRemaining % 60;
+                document.getElementById('timerDisplay').innerText = 
+                    m.toString().padStart(2, '0') + ":" + s.toString().padStart(2, '0');
+                
+                if (secondsRemaining <= 0) {
+                    clearInterval(timerInterval);
+                    timerInterval = null;
+                    alert("⏰ 本場時間到！請換場。");
+                    secondsRemaining = 15 * 60;
+                    document.getElementById('timerDisplay').innerText = "15:00";
+                    btn.innerText = "▶ 開始計時";
                 }
-                let m = Math.floor(secondsLeft / 60), s = secondsLeft % 60;
-                document.getElementById('timerDisplay').innerText = m.toString().padStart(2, '0') + ":" + s.toString().padStart(2, '0');
             }, 1000);
-        }
-    }
-
-    function shuffle(a) {
-        for (let i = a.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [a[i], a[j]] = [a[j], a[i]];
         }
     }
 </script>
