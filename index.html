@@ -3,44 +3,147 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>熊德盃羽球賽制規劃系統 v3.0</title>
+    <title>羽球臨打排點系統</title>
     <style>
-        body { font-family: sans-serif; background-color: #f4f4f4; padding: 20px; }
-        .container { max-width: 800px; margin: auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
-        .section { margin-bottom: 20px; border-bottom: 1px solid #eee; padding-bottom: 20px; }
-        input, select, button { width: 100%; padding: 10px; margin-bottom: 10px; border-radius: 4px; border: 1px solid #ccc; box-sizing: border-box; }
-        button { background-color: #007bff; color: white; border: none; cursor: pointer; }
-        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-        th { background-color: #f8f9fa; }
+        :root { --primary: #0f172a; --accent: #10b981; --danger: #ef4444; }
+        body { font-family: sans-serif; background: #f8fafc; margin: 0; padding: 15px; color: #334155; }
+        .card { background: white; border-radius: 12px; padding: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); margin-bottom: 20px; border: 1px solid #e2e8f0; }
+        .setup-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px; }
+        input, button { padding: 12px; border-radius: 8px; border: 1px solid #cbd5e1; font-size: 16px; width: 100%; box-sizing: border-box; }
+        button { background: var(--primary); color: white; border: none; cursor: pointer; font-weight: 600; }
+        .btn-draw { background: var(--accent); font-size: 20px; padding: 20px; }
+        .timer-box { font-size: 48px; font-weight: 800; text-align: center; margin: 10px 0; font-family: monospace; }
+        .timer-warn { color: var(--danger); animation: blink 1s infinite; }
+        @keyframes blink { 50% { opacity: 0.5; } }
+        .my-status { background: #f1f5f9; padding: 15px; border-radius: 8px; margin-top: 10px; border-left: 5px solid var(--accent); min-height: 50px; }
+        .status-msg { font-size: 13px; color: var(--accent); text-align: center; font-weight: bold; margin: 10px 0; }
     </style>
 </head>
 <body>
-    <div class="container">
-        <h1>🐻 熊德盃羽球賽制系統</h1>
-        <div class="section">
-            <input type="text" id="tName" placeholder="隊伍名稱">
-            <button onclick="addT()">新增隊伍</button>
-            <ul id="tList"></ul>
+
+<div class="container" style="max-width: 500px; margin: 0 auto;">
+    <h1 style="text-align: center;">🏸 羽球自動排點系統</h1>
+
+    <div class="card">
+        <h3>⚙️ 活動設定</h3>
+        <div class="setup-grid">
+            <div><label style="font-size:12px;">場地數量</label><input type="number" id="courtNum" value="2"></div>
+            <div><label style="font-size:12px;">總人數</label><input type="number" id="playerNum" value="12"></div>
         </div>
-        <button onclick="doSchedule()">🗓️ 開始自動排程</button>
-        <div id="res"></div>
+        <button id="initBtn" onclick="initSystem()">1. 初始化系統 (主辦人點擊)</button>
+        <div id="initStatus" class="status-msg"></div>
+        <button id="startBtn" onclick="toggleTimer()" style="display:none; background:#334155; margin-top:10px;">▶ 開始計時</button>
+        <div class="timer-box" id="timerDisplay">15:00</div>
     </div>
-    <script>
-        let ts = [];
-        function addT() {
-            const n = document.getElementById('tName').value;
-            if(n) { ts.push(n); document.getElementById('tList').innerHTML += `<li>${n}</li>`; document.getElementById('tName').value=''; }
+
+    <div class="card" id="drawSection" style="display:none; text-align:center;">
+        <h3>🎲 領取球員代號</h3>
+        <button class="btn-draw" id="drawBtn" onclick="drawCode()">點擊抽籤</button>
+        <div id="drawResult" style="font-size:32px; font-weight:bold; color:var(--accent); margin-top:10px;"></div>
+    </div>
+
+    <div class="card" id="querySection" style="display:none;">
+        <h3>🔍 個人賽程查詢</h3>
+        <input type="number" id="searchCode" placeholder="輸入你的代號" oninput="searchSchedule()">
+        <div id="personalSchedule" class="my-status"></div>
+    </div>
+</div>
+
+<script>
+    let playerPool = [];
+    let scheduleData = [];
+    let totalPlayers = 0;
+    let timer = null;
+    let secondsLeft = 15 * 60;
+
+    function initSystem() {
+        const M = parseInt(document.getElementById('playerNum').value);
+        const N = parseInt(document.getElementById('courtNum').value);
+        
+        if (M < 4 * N) {
+            alert("人數不足！" + N + "個場地需要" + (N*4) + "人。");
+            return;
         }
-        function doSchedule() {
-            let html = '<table><tr><th>場次</th><th>對戰組合</th></tr>';
-            for(let i=0; i<ts.length; i++) {
-                for(let j=i+1; j<ts.length; j++) {
-                    html += `<tr><td>第 ${i+j} 場</td><td>${ts[i]} VS ${ts[j]}</td></tr>`;
-                }
+
+        totalPlayers = M;
+        playerPool = Array.from({length: M}, (_, i) => i + 1);
+        shuffle(playerPool); 
+
+        scheduleData = [];
+        for (let r = 1; r <= 8; r++) {
+            let roundPlayers = Array.from({length: M}, (_, i) => i + 1);
+            shuffle(roundPlayers);
+            let roundMatches = [];
+            for (let c = 0; c < N; c++) {
+                roundMatches.push({
+                    court: c + 1,
+                    p: [roundPlayers[c*4], roundPlayers[c*4+1], roundPlayers[c*4+2], roundPlayers[c*4+3]]
+                });
             }
-            document.getElementById('res').innerHTML = html + '</table>';
+            scheduleData.push(roundMatches);
         }
-    </script>
+
+        document.getElementById('initStatus').innerText = "✅ 初始化成功！大家可以抽籤了。";
+        document.getElementById('drawSection').style.display = 'block';
+        document.getElementById('querySection').style.display = 'block';
+        document.getElementById('startBtn').style.display = 'block';
+    }
+
+    function drawCode() {
+        if (playerPool.length === 0) return alert("領完囉！");
+        let code = playerPool.pop();
+        document.getElementById('drawResult').innerText = "P" + code;
+        document.getElementById('searchCode').value = code;
+        searchSchedule();
+    }
+
+    function searchSchedule() {
+        const code = parseInt(document.getElementById('searchCode').value);
+        if (!code || code > totalPlayers) return;
+        let html = `<strong>P${code} 的賽程：</strong><br>`;
+        scheduleData.forEach((round, idx) => {
+            let found = false;
+            round.forEach(m => {
+                if (m.p.includes(code)) {
+                    html += `第${idx+1}場: 場地${m.court}<br>`;
+                    found = true;
+                }
+            });
+            if (!found) html += `<span style="color:#94a3b8">第${idx+1}場: 休息</span><br>`;
+        });
+        document.getElementById('personalSchedule').innerHTML = html;
+    }
+
+    function toggleTimer() {
+        if (timer) {
+            clearInterval(timer);
+            timer = null;
+            document.getElementById('startBtn').innerText = "▶ 繼續計時";
+        } else {
+            document.getElementById('startBtn').innerText = "⏸ 暫停";
+            timer = setInterval(() => {
+                secondsLeft--;
+                let m = Math.floor(secondsLeft / 60);
+                let s = secondsLeft % 60;
+                const el = document.getElementById('timerDisplay');
+                el.innerText = m.toString().padStart(2, '0') + ":" + s.toString().padStart(2, '0');
+                if (secondsLeft < 120) el.classList.add('timer-warn');
+                if (secondsLeft <= 0) {
+                    clearInterval(timer);
+                    alert("換場！");
+                    secondsLeft = 15 * 60;
+                }
+            }, 1000);
+        }
+    }
+
+    function shuffle(array) {
+        for (let i = array.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [array[i], array[j]] = [array[j], array[i]];
+        }
+    }
+</script>
+
 </body>
 </html>
