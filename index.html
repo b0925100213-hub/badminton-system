@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>熊德盃羽球賽制規劃系統 v3.0</title>
+    <style>
+        body { font-family: sans-serif; background-color: #f4f4f4; padding: 20px; }
+        .container { max-width: 800px; margin: auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        .section { margin-bottom: 20px; border-bottom: 1px solid #eee; padding-bottom: 20px; }
+        input, select, button { width: 100%; padding: 10px; margin-bottom: 10px; border-radius: 4px; border: 1px solid #ccc; box-sizing: border-box; }
+        button { background-color: #007bff; color: white; border: none; cursor: pointer; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        th { background-color: #f8f9fa; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🐻 熊德盃羽球賽制系統</h1>
+        <div class="section">
+            <input type="text" id="tName" placeholder="隊伍名稱">
+            <button onclick="addT()">新增隊伍</button>
+            <ul id="tList"></ul>
+        </div>
+        <button onclick="doSchedule()">🗓️ 開始自動排程</button>
+        <div id="res"></div>
+    </div>
+    <script>
+        let ts = [];
+        function addT() {
+            const n = document.getElementById('tName').value;
+            if(n) { ts.push(n); document.getElementById('tList').innerHTML += `<li>${n}</li>`; document.getElementById('tName').value=''; }
+        }
+        function doSchedule() {
+            let html = '<table><tr><th>場次</th><th>對戰組合</th></tr>';
+            for(let i=0; i<ts.length; i++) {
+                for(let j=i+1; j<ts.length; j++) {
+                    html += `<tr><td>第 ${i+j} 場</td><td>${ts[i]} VS ${ts[j]}</td></tr>`;
+                }
+            }
+            document.getElementById('res').innerHTML = html + '</table>';
+        }
+    </script>
+</body>
+</html>
