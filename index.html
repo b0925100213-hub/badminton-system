@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>羽球公平排點系統 v4.0</title>
+    <title>羽球雲端同步排點系統</title>
     <style>
         :root { --primary: #0f172a; --accent: #10b981; --danger: #ef4444; }
         body { font-family: sans-serif; background: #f8fafc; margin: 0; padding: 15px; color: #334155; line-height: 1.5; }
@@ -15,14 +15,15 @@
         .btn-draw { background: var(--accent); font-size: 20px; padding: 20px; margin-top: 10px; }
         .timer-box { font-size: 48px; font-weight: 800; text-align: center; margin: 10px 0; font-family: monospace; color: var(--primary); }
         .my-status { background: #f1f5f9; padding: 15px; border-radius: 8px; margin-top: 15px; border-left: 5px solid var(--accent); min-height: 100px; }
-        .status-msg { text-align: center; color: var(--accent); font-weight: bold; margin: 10px 0; }
-        hr { border: 0; border-top: 1px solid #e2e8f0; margin: 15px 0; }
+        .status-msg { text-align: center; color: var(--accent); font-weight: bold; margin: 10px 0; font-size: 14px; }
+        .loading { color: #94a3b8; font-size: 12px; text-align: center; }
     </style>
 </head>
 <body>
 
 <div class="container" style="max-width: 500px; margin: 0 auto;">
-    <h1>🏸 羽球公平排點系統</h1>
+    <h1>🏸 羽球雲端同步系統</h1>
+    <div id="loadingMsg" class="loading">正在連線至雲端資料庫...</div>
 
     <div class="card">
         <h3>⚙️ 活動設定</h3>
@@ -30,151 +31,156 @@
             <div><label style="font-size:12px;">場地數量</label><input type="number" id="courtNum" value="2"></div>
             <div><label style="font-size:12px;">總人數</label><input type="number" id="playerNum" value="12"></div>
         </div>
-        <button onclick="initSystem()">1. 初始化系統 (主辦人)</button>
+        <button onclick="initSystemCloud()">1. 初始化新活動 (主辦人點擊)</button>
         <div id="initStatus" class="status-msg"></div>
-        <button id="startBtn" onclick="toggleTimer()" style="display:none; background:#334155; margin-top:10px;">▶ 開始計時</button>
         <div class="timer-box" id="timerDisplay">15:00</div>
     </div>
 
     <div class="card" id="drawSection" style="display:none; text-align:center;">
         <h3>🎲 領取球員代號</h3>
-        <p style="font-size:12px; color:#64748b;">每人點擊一次，領取後請記住號碼</p>
-        <button class="btn-draw" id="drawBtn" onclick="drawCode()">點擊抽籤</button>
+        <p id="remainingCount" style="font-size:12px; color:#64748b;">正在計算剩餘號碼...</p>
+        <button class="btn-draw" id="drawBtn" onclick="drawCodeCloud()">點擊抽籤</button>
         <div id="drawResult" style="font-size:40px; font-weight:bold; color:var(--accent); margin-top:10px;"></div>
     </div>
 
     <div class="card" id="querySection" style="display:none;">
         <h3>🔍 個人賽程查詢</h3>
-        <input type="number" id="searchCode" placeholder="輸入你的代號 (例如: 5)" oninput="searchSchedule()">
-        <div id="personalSchedule" class="my-status">請輸入代號查看結果</div>
+        <input type="number" id="searchCode" placeholder="輸入代號" oninput="searchSchedule()">
+        <div id="personalSchedule" class="my-status"></div>
     </div>
 </div>
 
-<script>
-    let playerDrawPool = []; // 供抽籤用的池
-    let scheduleData = [];   // 儲存 8 場賽程
-    let totalPlayersCount = 0;
-    let timerInterval = null;
-    let secondsRemaining = 15 * 60;
+<script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+    import { getFirestore, doc, setDoc, getDoc, updateDoc, arrayRemove, onSnapshot } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
-    function initSystem() {
+    const firebaseConfig = {
+        apiKey: "AIzaSyAZBxht3PdOnJ6vb1cfkWKDG7cBrAmOrrg",
+        authDomain: "badminton-sync.firebaseapp.com",
+        projectId: "badminton-sync",
+        storageBucket: "badminton-sync.firebasestorage.app",
+        messagingSenderId: "1062373757796",
+        appId: "1:1062373757796:web:a54e623fc12d0e834ea071",
+        measurementId: "G-TTB3XDKBPF"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+    const gameId = "today_match"; 
+
+    let localSchedule = [];
+    let totalPlayers = 0;
+
+    // 實時監聽雲端資料
+    onSnapshot(doc(db, "games", gameId), (docSnap) => {
+        document.getElementById('loadingMsg').style.display = 'none';
+        if (docSnap.exists()) {
+            const data = docSnap.data();
+            localSchedule = data.schedule;
+            totalPlayers = data.totalPlayers;
+            
+            document.getElementById('initStatus').innerText = "☁️ 已從雲端同步最新賽程";
+            document.getElementById('drawSection').style.display = 'block';
+            document.getElementById('querySection').style.display = 'block';
+            document.getElementById('remainingCount').innerText = `剩餘可抽取號碼：${data.pool.length} 個`;
+            
+            searchSchedule(); 
+        } else {
+            document.getElementById('initStatus').innerText = "❌ 雲端尚無活動，請主辦人初始化。";
+        }
+    });
+
+    // 初始化系統 (主辦人)
+    window.initSystemCloud = async () => {
         const M = parseInt(document.getElementById('playerNum').value);
         const N = parseInt(document.getElementById('courtNum').value);
-        
-        if (M < 4 * N) {
-            alert(`人數不足！${N}個場地至少需要 ${N*4} 人。`);
-            return;
-        }
+        if (M < 4 * N) return alert(`人數不足！${N}個場地需要${N*4}人。`);
 
-        totalPlayersCount = M;
-        // 1. 建立抽籤池並打亂
-        playerDrawPool = Array.from({length: M}, (_, i) => i + 1);
-        for (let i = playerDrawPool.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [playerDrawPool[i], playerDrawPool[j]] = [playerDrawPool[j], playerDrawPool[i]];
-        }
-
-        // 2. 公平排點算法生成 8 場賽程
-        let playCounts = {}; // 紀錄每個人打幾場
+        let playCounts = {};
         for (let i = 1; i <= M; i++) playCounts[i] = 0;
+        let schedule = [];
 
-        scheduleData = [];
-        for (let r = 1; r <= 8; r++) {
-            // 挑選這輪上場的人：優先挑打最少場的人
-            let playersSortedByPlayCount = Array.from({length: M}, (_, i) => i + 1)
-                .map(id => ({ id: id, count: playCounts[id], rand: Math.random() }))
+        for (let r = 0; r < 8; r++) {
+            let sorted = Array.from({length: M}, (_, i) => i + 1)
+                .map(id => ({ id, count: playCounts[id], rand: Math.random() }))
                 .sort((a, b) => a.count - b.count || a.rand - b.rand);
-
-            let selectedThisRound = playersSortedByPlayCount.slice(0, N * 4).map(p => p.id);
-            // 隨機分配到各個場地
-            for (let i = selectedThisRound.length - 1; i > 0; i--) {
+            let selected = sorted.slice(0, N * 4).map(p => p.id);
+            for (let i = selected.length - 1; i > 0; i--) {
                 const j = Math.floor(Math.random() * (i + 1));
-                [selectedThisRound[i], selectedThisRound[j]] = [selectedThisRound[j], selectedThisRound[i]];
+                [selected[i], selected[j]] = [selected[j], selected[i]];
             }
-
             let roundMatches = [];
             for (let c = 0; c < N; c++) {
-                let matchTeams = selectedThisRound.slice(c * 4, (c + 1) * 4);
-                // 更新出賽場次
-                matchTeams.forEach(id => playCounts[id]++);
-                roundMatches.push({ court: c + 1, players: matchTeams });
+                let m = selected.slice(c * 4, (c + 1) * 4);
+                m.forEach(id => playCounts[id]++);
+                roundMatches.push({ court: c + 1, players: m });
             }
-            scheduleData.push(roundMatches);
+            schedule.push(roundMatches);
         }
 
-        document.getElementById('initStatus').innerText = "✅ 系統初始化成功！可以開始抽籤。";
-        document.getElementById('drawSection').style.display = 'block';
-        document.getElementById('querySection').style.display = 'block';
-        document.getElementById('startBtn').style.display = 'block';
-        document.getElementById('drawResult').innerText = "";
-    }
-
-    function drawCode() {
-        if (playerDrawPool.length === 0) {
-            alert("號碼已全數抽完！");
-            return;
+        try {
+            await setDoc(doc(db, "games", gameId), {
+                schedule: schedule,
+                pool: Array.from({length: M}, (_, i) => i + 1), 
+                totalPlayers: M,
+                createdAt: new Date()
+            });
+            alert("✅ 雲端初始化完成！");
+        } catch (e) {
+            alert("發生錯誤：" + e.message);
         }
-        let code = playerDrawPool.pop();
-        document.getElementById('drawResult').innerText = "P" + code;
-        document.getElementById('searchCode').value = code;
-        searchSchedule(); // 抽完自動查詢
-    }
+    };
 
-    function searchSchedule() {
+    // 抽籤邏輯 (雲端扣除)
+    window.drawCodeCloud = async () => {
+        const docRef = doc(db, "games", gameId);
+        const docSnap = await getDoc(docRef);
+        if (!docSnap.exists()) return alert("請先等候主辦人初始化！");
+        
+        let pool = docSnap.data().pool;
+        if (pool.length === 0) return alert("號碼已全數被領完！");
+
+        let randomIndex = Math.floor(Math.random() * pool.length);
+        let myCode = pool[randomIndex];
+
+        try {
+            await updateDoc(docRef, {
+                pool: arrayRemove(myCode)
+            });
+            document.getElementById('drawResult').innerText = "P" + myCode;
+            document.getElementById('searchCode').value = myCode;
+            localStorage.setItem('myBadmintonCode', myCode); 
+            searchSchedule();
+        } catch (e) {
+            alert("抽籤失敗，可能有人同時抽取，請再試一次。");
+        }
+    };
+
+    // 查詢邏輯
+    window.searchSchedule = () => {
         const code = parseInt(document.getElementById('searchCode').value);
         const display = document.getElementById('personalSchedule');
-        
-        if (!code || code <= 0 || code > totalPlayersCount) {
-            display.innerHTML = "請輸入有效的球員代號 (1-" + totalPlayersCount + ")";
-            return;
-        }
+        if (!code || !localSchedule.length) return;
 
-        let html = `<strong>代號 P${code} 的賽程表：</strong><br><hr>`;
         let totalGames = 0;
-
-        scheduleData.forEach((round, index) => {
-            let foundInRound = false;
+        let html = `<strong>P${code} 的賽程表：</strong><br><hr style="border:0.5px solid #eee">`;
+        localSchedule.forEach((round, idx) => {
+            let found = false;
             round.forEach(m => {
                 if (m.players.includes(code)) {
-                    html += `第 ${index + 1} 場：🧱 <strong>場地 ${m.court}</strong><br>`;
-                    foundInRound = true;
-                    totalGames++;
+                    html += `第 ${idx + 1} 場：🧱 <strong>場地 ${m.court}</strong><br>`;
+                    found = true; totalGames++;
                 }
             });
-            if (!foundInRound) {
-                html += `<span style="color:#94a3b8">第 ${index + 1} 場：💤 休息</span><br>`;
-            }
+            if (!found) html += `<span style="color:#94a3b8">第 ${idx + 1} 場：💤 休息</span><br>`;
         });
+        display.innerHTML = html + `<hr style="border:0.5px solid #eee"><strong>共出賽 ${totalGames} 場</strong>`;
+    };
 
-        html += `<hr><strong>總計上場：${totalGames} 場</strong>`;
-        display.innerHTML = html;
-    }
-
-    function toggleTimer() {
-        const btn = document.getElementById('startBtn');
-        if (timerInterval) {
-            clearInterval(timerInterval);
-            timerInterval = null;
-            btn.innerText = "▶ 繼續計時";
-        } else {
-            btn.innerText = "⏸ 暫停計時";
-            timerInterval = setInterval(() => {
-                secondsRemaining--;
-                let m = Math.floor(secondsRemaining / 60);
-                let s = secondsRemaining % 60;
-                document.getElementById('timerDisplay').innerText = 
-                    m.toString().padStart(2, '0') + ":" + s.toString().padStart(2, '0');
-                
-                if (secondsRemaining <= 0) {
-                    clearInterval(timerInterval);
-                    timerInterval = null;
-                    alert("⏰ 本場時間到！請換場。");
-                    secondsRemaining = 15 * 60;
-                    document.getElementById('timerDisplay').innerText = "15:00";
-                    btn.innerText = "▶ 開始計時";
-                }
-            }, 1000);
-        }
+    const saved = localStorage.getItem('myBadmintonCode');
+    if (saved) {
+        document.getElementById('searchCode').value = saved;
+        document.getElementById('drawResult').innerText = "P" + saved;
     }
 </script>
 
