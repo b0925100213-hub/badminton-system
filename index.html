@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>羽球雲端同步排點系統</title>
+    <title>羽球雲端同步排點系統 v5.0</title>
     <style>
         :root { --primary: #0f172a; --accent: #10b981; --danger: #ef4444; }
         body { font-family: sans-serif; background: #f8fafc; margin: 0; padding: 15px; color: #334155; line-height: 1.5; }
@@ -38,7 +38,7 @@
 
     <div class="card" id="drawSection" style="display:none; text-align:center;">
         <h3>🎲 領取球員代號</h3>
-        <p id="remainingCount" style="font-size:12px; color:#64748b;">正在計算剩餘號碼...</p>
+        <p id="remainingCount" style="font-size:12px; color:#64748b;">正在載入...</p>
         <button class="btn-draw" id="drawBtn" onclick="drawCodeCloud()">點擊抽籤</button>
         <div id="drawResult" style="font-size:40px; font-weight:bold; color:var(--accent); margin-top:10px;"></div>
     </div>
@@ -71,7 +71,6 @@
     let localSchedule = [];
     let totalPlayers = 0;
 
-    // 實時監聽雲端資料
     onSnapshot(doc(db, "games", gameId), (docSnap) => {
         document.getElementById('loadingMsg').style.display = 'none';
         if (docSnap.exists()) {
@@ -90,11 +89,10 @@
         }
     });
 
-    // 初始化系統 (主辦人)
     window.initSystemCloud = async () => {
         const M = parseInt(document.getElementById('playerNum').value);
         const N = parseInt(document.getElementById('courtNum').value);
-        if (M < 4 * N) return alert(`人數不足！${N}個場地需要${N*4}人。`);
+        if (M < 4 * N) return alert("人數不足！");
 
         let playCounts = {};
         for (let i = 1; i <= M; i++) playCounts[i] = 0;
@@ -113,9 +111,10 @@
             for (let c = 0; c < N; c++) {
                 let m = selected.slice(c * 4, (c + 1) * 4);
                 m.forEach(id => playCounts[id]++);
-                roundMatches.push({ court: c + 1, players: m });
+                // 修正重點：將陣列轉換為物件儲存，避免 Nested Arrays 報錯
+                roundMatches.push({ court: c + 1, teamList: m }); 
             }
-            schedule.push(roundMatches);
+            schedule.push({ roundIndex: r + 1, matches: roundMatches });
         }
 
         try {
@@ -125,38 +124,35 @@
                 totalPlayers: M,
                 createdAt: new Date()
             });
-            alert("✅ 雲端初始化完成！");
+            alert("✅ 雲端初始化成功！");
         } catch (e) {
+            console.error(e);
             alert("發生錯誤：" + e.message);
         }
     };
 
-    // 抽籤邏輯 (雲端扣除)
     window.drawCodeCloud = async () => {
         const docRef = doc(db, "games", gameId);
         const docSnap = await getDoc(docRef);
         if (!docSnap.exists()) return alert("請先等候主辦人初始化！");
         
         let pool = docSnap.data().pool;
-        if (pool.length === 0) return alert("號碼已全數被領完！");
+        if (pool.length === 0) return alert("號碼已抽完！");
 
         let randomIndex = Math.floor(Math.random() * pool.length);
         let myCode = pool[randomIndex];
 
         try {
-            await updateDoc(docRef, {
-                pool: arrayRemove(myCode)
-            });
+            await updateDoc(docRef, { pool: arrayRemove(myCode) });
             document.getElementById('drawResult').innerText = "P" + myCode;
             document.getElementById('searchCode').value = myCode;
             localStorage.setItem('myBadmintonCode', myCode); 
             searchSchedule();
         } catch (e) {
-            alert("抽籤失敗，可能有人同時抽取，請再試一次。");
+            alert("抽籤失敗，請再試一次。");
         }
     };
 
-    // 查詢邏輯
     window.searchSchedule = () => {
         const code = parseInt(document.getElementById('searchCode').value);
         const display = document.getElementById('personalSchedule');
@@ -164,15 +160,15 @@
 
         let totalGames = 0;
         let html = `<strong>P${code} 的賽程表：</strong><br><hr style="border:0.5px solid #eee">`;
-        localSchedule.forEach((round, idx) => {
-            let found = false;
-            round.forEach(m => {
-                if (m.players.includes(code)) {
-                    html += `第 ${idx + 1} 場：🧱 <strong>場地 ${m.court}</strong><br>`;
-                    found = true; totalGames++;
+        localSchedule.forEach((roundObj) => {
+            let foundInRound = false;
+            roundObj.matches.forEach(m => {
+                if (m.teamList.includes(code)) {
+                    html += `第 ${roundObj.roundIndex} 場：🧱 <strong>場地 ${m.court}</strong><br>`;
+                    foundInRound = true; totalGames++;
                 }
             });
-            if (!found) html += `<span style="color:#94a3b8">第 ${idx + 1} 場：💤 休息</span><br>`;
+            if (!foundInRound) html += `<span style="color:#94a3b8">第 ${roundObj.roundIndex} 場：💤 休息</span><br>`;
         });
         display.innerHTML = html + `<hr style="border:0.5px solid #eee"><strong>共出賽 ${totalGames} 場</strong>`;
     };
