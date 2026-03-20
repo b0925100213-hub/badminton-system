@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>羽球雲端同步排點系統 v5.0</title>
+    <title>羽球雲端同步排點系統 v5.1</title>
     <style>
         :root { --primary: #0f172a; --accent: #10b981; --danger: #ef4444; }
         body { font-family: sans-serif; background: #f8fafc; margin: 0; padding: 15px; color: #334155; line-height: 1.5; }
@@ -69,14 +69,15 @@
     const gameId = "today_match"; 
 
     let localSchedule = [];
-    let totalPlayers = 0;
+    let totalPlayersCount = 0;
 
+    // 實時監控雲端狀態
     onSnapshot(doc(db, "games", gameId), (docSnap) => {
         document.getElementById('loadingMsg').style.display = 'none';
         if (docSnap.exists()) {
             const data = docSnap.data();
-            localSchedule = data.schedule;
-            totalPlayers = data.totalPlayers;
+            localSchedule = data.schedule; // 這裡現在是物件陣列
+            totalPlayersCount = data.totalPlayers;
             
             document.getElementById('initStatus').innerText = "☁️ 已從雲端同步最新賽程";
             document.getElementById('drawSection').style.display = 'block';
@@ -85,36 +86,37 @@
             
             searchSchedule(); 
         } else {
-            document.getElementById('initStatus').innerText = "❌ 雲端尚無活動，請主辦人初始化。";
+            document.getElementById('initStatus').innerText = "❌ 雲端尚未初始化。";
         }
     });
 
     window.initSystemCloud = async () => {
         const M = parseInt(document.getElementById('playerNum').value);
         const N = parseInt(document.getElementById('courtNum').value);
-        if (M < 4 * N) return alert("人數不足！");
+        if (M < 4 * N) return alert("人數不足以開場！");
 
-        let playCounts = {};
-        for (let i = 1; i <= M; i++) playCounts[i] = 0;
+        let playCounts = Array(M + 1).fill(0);
         let schedule = [];
 
-        for (let r = 0; r < 8; r++) {
+        for (let r = 1; r <= 8; r++) {
             let sorted = Array.from({length: M}, (_, i) => i + 1)
                 .map(id => ({ id, count: playCounts[id], rand: Math.random() }))
                 .sort((a, b) => a.count - b.count || a.rand - b.rand);
+            
             let selected = sorted.slice(0, N * 4).map(p => p.id);
             for (let i = selected.length - 1; i > 0; i--) {
                 const j = Math.floor(Math.random() * (i + 1));
                 [selected[i], selected[j]] = [selected[j], selected[i]];
             }
+
             let roundMatches = [];
             for (let c = 0; c < N; c++) {
-                let m = selected.slice(c * 4, (c + 1) * 4);
-                m.forEach(id => playCounts[id]++);
-                // 修正重點：將陣列轉換為物件儲存，避免 Nested Arrays 報錯
-                roundMatches.push({ court: c + 1, teamList: m }); 
+                let matchTeams = selected.slice(c * 4, (c + 1) * 4);
+                matchTeams.forEach(id => playCounts[id]++);
+                // 將陣列包進物件屬性 'p'，解決 Nested Array 報錯
+                roundMatches.push({ court: c + 1, p: matchTeams }); 
             }
-            schedule.push({ roundIndex: r + 1, matches: roundMatches });
+            schedule.push({ round: r, matches: roundMatches });
         }
 
         try {
@@ -126,7 +128,7 @@
             });
             alert("✅ 雲端初始化成功！");
         } catch (e) {
-            console.error(e);
+            console.error("Firebase Error:", e);
             alert("發生錯誤：" + e.message);
         }
     };
@@ -134,10 +136,10 @@
     window.drawCodeCloud = async () => {
         const docRef = doc(db, "games", gameId);
         const docSnap = await getDoc(docRef);
-        if (!docSnap.exists()) return alert("請先等候主辦人初始化！");
+        if (!docSnap.exists()) return alert("請等待主辦人初始化。");
         
         let pool = docSnap.data().pool;
-        if (pool.length === 0) return alert("號碼已抽完！");
+        if (pool.length === 0) return alert("代號已全數領完！");
 
         let randomIndex = Math.floor(Math.random() * pool.length);
         let myCode = pool[randomIndex];
@@ -149,7 +151,7 @@
             localStorage.setItem('myBadmintonCode', myCode); 
             searchSchedule();
         } catch (e) {
-            alert("抽籤失敗，請再試一次。");
+            alert("抽籤失敗，請再點一次。");
         }
     };
 
@@ -159,24 +161,25 @@
         if (!code || !localSchedule.length) return;
 
         let totalGames = 0;
-        let html = `<strong>P${code} 的賽程表：</strong><br><hr style="border:0.5px solid #eee">`;
+        let html = `<strong>代號 P${code} 的賽程：</strong><br><hr style="border:0.5px solid #eee">`;
+        
         localSchedule.forEach((roundObj) => {
-            let foundInRound = false;
+            let found = false;
             roundObj.matches.forEach(m => {
-                if (m.teamList.includes(code)) {
-                    html += `第 ${roundObj.roundIndex} 場：🧱 <strong>場地 ${m.court}</strong><br>`;
-                    foundInRound = true; totalGames++;
+                if (m.p.includes(code)) {
+                    html += `第 ${roundObj.round} 場：🧱 <strong>場地 ${m.court}</strong><br>`;
+                    found = true; totalGames++;
                 }
             });
-            if (!foundInRound) html += `<span style="color:#94a3b8">第 ${roundObj.roundIndex} 場：💤 休息</span><br>`;
+            if (!found) html += `<span style="color:#94a3b8">第 ${roundObj.round} 場：💤 休息</span><br>`;
         });
-        display.innerHTML = html + `<hr style="border:0.5px solid #eee"><strong>共出賽 ${totalGames} 場</strong>`;
+        display.innerHTML = html + `<hr style="border:0.5px solid #eee"><strong>共出賽 ${totalGames} 場次</strong>`;
     };
 
-    const saved = localStorage.getItem('myBadmintonCode');
-    if (saved) {
-        document.getElementById('searchCode').value = saved;
-        document.getElementById('drawResult').innerText = "P" + saved;
+    const savedCode = localStorage.getItem('myBadmintonCode');
+    if (savedCode) {
+        document.getElementById('searchCode').value = savedCode;
+        document.getElementById('drawResult').innerText = "P" + savedCode;
     }
 </script>
 
